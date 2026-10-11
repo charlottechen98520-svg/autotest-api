@@ -1,9 +1,53 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel
 
 
 app = FastAPI()
 
 
+users = []
+
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.post("/register", status_code=status.HTTP_201_CREATED)
+def register_user(user: UserRegister):
+    username = user.username.strip()
+    password = user.password.strip()
+
+    if username == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username cannot be empty"
+        )
+
+    if password == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password cannot be empty"
+        )
+
+    for existing_user in users:
+        if existing_user["username"] == username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already exists"
+            )
+
+    users.append({
+        "username": username,
+        "password": password
+    })
+
+    return {
+        "message": "User registered successfully",
+        "username": username
+    }
