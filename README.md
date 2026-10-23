@@ -48,34 +48,44 @@ The long-term goal is to develop a maintainable automated API testing framework 
                        v
                 FastAPI Backend
                        |
-              Request Validation
+               Request Validation
                        |
                 Business Logic
                        |
+              +--------+--------+
+              |                 |
+              v                 v
+        Registration       Login Validation
+              |                 |
+              +--------+--------+
+                       |
                        v
              In-Memory User Storage
-                 (Temporary)
+                  (Temporary)
+
 
              Automated Test Suite
                        |
                        v
-                 pytest Tests
+                  pytest Tests
                        |
-             +---------+---------+
-             |                   |
-             v                   v
-        HTTP Status         JSON Response
-        Validation           Validation
-             |                   |
-             +---------+---------+
+            +----------+----------+
+            |                     |
+            v                     v
+       HTTP Status           JSON Response
+        Validation            Validation
+            |                     |
+            +----------+----------+
                        |
                        v
-                 PASS / FAIL
+                   PASS / FAIL
 ```
 
-**Current Implementation:** User information is temporarily stored in memory using a Python list.
+**Current Implementation:** User registration and login functionality are implemented using in-memory user storage.
 
-**Future Implementation:** MySQL will replace in-memory storage and support database-level test validation.
+**Current Authentication:** Login verifies submitted credentials against registered users. Token-based authentication and session management have not yet been implemented.
+
+**Future Implementation:** MySQL will replace in-memory storage and support database-level test validation. Password hashing and token-based authentication will also be introduced.
 
 ## 4. Project Structure
 
@@ -89,6 +99,7 @@ autotest-api/
 |-- tests/
 |   |-- test_health.py
 |   |-- test_register.py
+|   |-- test_login.py
 |
 |-- .gitignore
 |-- requirements.txt
@@ -103,6 +114,7 @@ autotest-api/
 | `app/__init__.py` | Python package initialization |
 | `tests/test_health.py` | Health check automated tests |
 | `tests/test_register.py` | User registration automated tests |
+| `tests/test_login.py` | User login automated tests |
 | `.gitignore` | Excludes virtual environments and temporary files |
 | `requirements.txt` | Python package dependencies |
 | `README.md` | Project documentation |
@@ -139,6 +151,7 @@ cd autotest-api
 
 ```bash
 python3 -m venv .venv
+
 source .venv/bin/activate
 ```
 
@@ -146,6 +159,7 @@ source .venv/bin/activate
 
 ```powershell
 python -m venv .venv
+
 .\.venv\Scripts\Activate.ps1
 ```
 
@@ -183,12 +197,13 @@ FastAPI automatically generates interactive API documentation that can be used t
 
 ## 6. Implemented RESTful APIs
 
-The following endpoints are implemented in the Day 1–2 version.
+The following endpoints are implemented in the Day 1–3 version.
 
 | Method | Endpoint | Description | Success Status |
 |---|---|---|---|
 | GET | `/health` | Check API service availability | 200 |
 | POST | `/register` | Register a new user | 201 |
+| POST | `/login` | Validate user credentials | 200 |
 
 ### 6.1 Health Check API
 
@@ -295,7 +310,162 @@ A request without the required `password` field results in a validation error.
 - Leading and trailing whitespace is removed from usernames.
 - Successful registration responses do not include the password.
 
-**Security Limitation:** The current educational prototype temporarily stores passwords in plaintext in memory. It must not be used with real user credentials or deployed as a production authentication service. Password hashing and persistent storage will be added before implementing a production-style authentication workflow.
+### 6.3 User Login API
+
+**Endpoint:**
+
+```http
+POST /login
+```
+
+The login endpoint verifies the username and password of an existing registered user.
+
+Unlike the registration endpoint, login does not create a new user. It validates the submitted credentials against the user information currently stored in memory.
+
+**Request Body:**
+
+```json
+{
+  "username": "alice",
+  "password": "123456"
+}
+```
+
+**Successful Response:**
+
+Status: `200 OK`
+
+```json
+{
+  "message": "Login successful",
+  "username": "alice"
+}
+```
+
+A successful login requires:
+
+- The username exists in the registered user list.
+- The submitted password matches the stored password.
+- Both input fields contain valid non-empty values.
+
+The successful login response does not include the password.
+
+**Incorrect Password:**
+
+Status: `401 Unauthorized`
+
+```json
+{
+  "detail": "Invalid username or password"
+}
+```
+
+**Non-Existing Username:**
+
+Status: `401 Unauthorized`
+
+```json
+{
+  "detail": "Invalid username or password"
+}
+```
+
+The same error message is used for incorrect passwords and unknown usernames to avoid revealing whether a particular username exists.
+
+**Empty Username:**
+
+Status: `400 Bad Request`
+
+```json
+{
+  "detail": "Username cannot be empty"
+}
+```
+
+**Empty Password:**
+
+Status: `400 Bad Request`
+
+```json
+{
+  "detail": "Password cannot be empty"
+}
+```
+
+**Whitespace-Only Username:**
+
+Status: `400 Bad Request`
+
+```json
+{
+  "detail": "Username cannot be empty"
+}
+```
+
+**Missing Required Field:**
+
+Status: `422 Unprocessable Content`
+
+For example:
+
+```json
+{
+  "username": "alice"
+}
+```
+
+Since `password` is a required field in the Pydantic request model, FastAPI automatically rejects the request.
+
+### Current Login Rules
+
+- Username is required.
+- Password is required.
+- Empty usernames are rejected.
+- Empty passwords are rejected.
+- Whitespace-only usernames are rejected.
+- Leading and trailing whitespace is removed from usernames.
+- The submitted username must exist in the registered user list.
+- The submitted password must match the stored password.
+- Incorrect usernames and passwords return `401 Unauthorized`.
+- Successful login responses do not include passwords.
+- Login currently performs credential validation only; authentication tokens are not issued.
+
+### Login Workflow
+
+```text
+POST /login
+     |
+     v
+Receive Username and Password
+     |
+     v
+Pydantic Request Validation
+     |
+     +---- Missing Required Field ----> 422
+     |
+     v
+Check Empty Input
+     |
+     +---- Empty Username/Password ---> 400
+     |
+     v
+Search Registered Users
+     |
+     +---- Username Not Found --------> 401
+     |
+     v
+Compare Password
+     |
+     +---- Incorrect Password --------> 401
+     |
+     v
+Successful Login
+     |
+     v
+200 OK
+```
+
+**Security Limitation:** The current educational prototype temporarily stores passwords in plaintext in memory and compares credentials directly. This implementation must not be used with real credentials or exposed as a production authentication service. Password hashing, persistent storage, and token-based authentication are planned improvements.
 
 ## 7. Automated API Testing
 
@@ -307,6 +477,9 @@ The tests verify API behavior by comparing actual responses with predefined expe
 
 ```text
 Define Test Case
+       |
+       v
+Prepare Test Data
        |
        v
 Send HTTP Request
@@ -364,7 +537,102 @@ The registration tests cover successful registration, invalid inputs, duplicate 
 
 The successful registration test also verifies that passwords are not included in API responses.
 
-### 7.3 Running Automated Tests
+### 7.3 Login API Tests
+
+File: `tests/test_login.py`
+
+The login tests cover successful authentication, invalid credentials, empty inputs, and missing required fields.
+
+| Test ID | Test Scenario | Expected Status |
+|---|---|---|
+| LOGIN001 | Login with valid username and password | 200 |
+| LOGIN002 | Login with an incorrect password | 401 |
+| LOGIN003 | Login with a non-existing username | 401 |
+| LOGIN004 | Login with an empty username | 400 |
+| LOGIN005 | Login with an empty password | 400 |
+| LOGIN006 | Login with whitespace-only username | 400 |
+| LOGIN007 | Login without a password field | 422 |
+
+**Total Login Tests: 7**
+
+### Login Test Setup
+
+Unlike registration tests, successful login tests require a registered user to exist before the login request is executed.
+
+A helper function is used to prepare the required test user.
+
+```python
+def register_test_user(username, password="123456"):
+    response = client.post(
+        "/register",
+        json={
+            "username": username,
+            "password": password
+        }
+    )
+
+    assert response.status_code == 201
+```
+
+This helper function creates a user before the login test.
+
+For example:
+
+```python
+def test_login_success():
+    register_test_user(
+        "login_success_user",
+        "123456"
+    )
+
+    response = client.post(
+        "/login",
+        json={
+            "username": "login_success_user",
+            "password": "123456"
+        }
+    )
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "message": "Login successful",
+        "username": "login_success_user"
+    }
+
+    assert "password" not in response.json()
+```
+
+### Login Test Execution Flow
+
+```text
+Start Login Test
+       |
+       v
+Register Test User
+       |
+       v
+Verify Registration Success
+       |
+       v
+Send Login Request
+       |
+       v
+Receive Login Response
+       |
+       v
+Verify Status Code
+       |
+       v
+Verify JSON Response
+       |
+       v
+    PASS / FAIL
+```
+
+This introduces the concept of **test setup**, where necessary data or conditions are prepared before testing a specific function.
+
+### 7.4 Running Automated Tests
 
 From the project root:
 
@@ -372,38 +640,41 @@ From the project root:
 python -m pytest -q
 ```
 
-Expected result for the Day 1–2 version:
+Verified result for the completed Day 3 version:
 
 ```text
-7 passed
+14 passed
 ```
 
 The automated test suite currently contains:
 
 - 1 health check test
 - 6 user registration tests
+- 7 user login tests
 
-**Total: 7 automated tests**
+**Total: 14 automated tests**
 
-The passing result should be confirmed locally before the corresponding project milestone is marked complete.
+All 14 tests have been successfully executed and passed during Day 3 verification.
 
-### 7.4 Example Test Failure
+### 7.5 Example Test Failure
 
-Suppose the test expects:
+Suppose a login test expects:
 
 ```text
-Expected HTTP Status: 201
+Expected HTTP Status: 401
 ```
 
 But the server returns:
 
 ```text
-Actual HTTP Status: 404
+Actual HTTP Status: 200
 ```
 
 pytest reports a failure.
 
-This helps developers identify functionality that is missing or inconsistent with the API specification.
+This may indicate that invalid credentials were incorrectly accepted by the login endpoint.
+
+Automated tests help identify behavior that is inconsistent with the API specification.
 
 Test failures should be investigated against the agreed requirements instead of changing expected results merely to make tests pass.
 
@@ -415,9 +686,11 @@ The project follows a lightweight test-first development approach.
 
 Verify that valid requests produce the expected results.
 
-Example:
+Examples:
 
 - A new user can register successfully.
+- An existing user can log in with valid credentials.
+- Successful API responses contain the expected JSON data.
 
 ### Negative Testing
 
@@ -428,14 +701,18 @@ Examples:
 - Duplicate username
 - Empty password
 - Missing required field
+- Incorrect login password
+- Non-existing login username
 
 ### Boundary Testing
 
 Verify behavior around input limits and special values.
 
-Current example:
+Current examples:
 
+- Empty usernames
 - Whitespace-only usernames
+- Empty passwords
 
 Future scenarios may include:
 
@@ -444,11 +721,41 @@ Future scenarios may include:
 - Oversized request bodies
 - Invalid data types
 
+### Authentication Testing
+
+Verify that login requests follow the expected credential validation rules.
+
+Current scenarios include:
+
+- Valid username and password
+- Incorrect password
+- Unknown username
+- Missing login fields
+- Invalid empty input
+
+Token validation, expiration, and authorization testing will be introduced in later development stages.
+
+### Test Setup
+
+Some tests require existing application data.
+
+For example, a successful login test requires a registered user.
+
+A reusable registration helper is used to create the necessary test user before login validation.
+
+In later stages, pytest fixtures will be introduced to manage test setup and teardown more systematically.
+
 ### Regression Testing
 
 Previously implemented tests are executed again after changes to ensure existing functionality still works.
 
-For example, the original health check test remains in the test suite after the registration API is added.
+For example:
+
+- Day 1 health tests continue running after registration and login are added.
+- Day 2 registration tests continue running after the login API is implemented.
+- Day 3 login tests are added to the existing regression test suite.
+
+The complete suite currently contains 14 tests.
 
 ## 9. Development Workflow
 
@@ -464,7 +771,15 @@ Test Case Design
 Create Feature Branch
      |
      v
-Implement API and Tests
+Write Automated Tests
+     |
+     v
+Execute Tests
+     |
+     +---- FAIL (Expected Before Implementation)
+     |
+     v
+Implement API
      |
      v
 Execute pytest
@@ -496,7 +811,7 @@ Merge into main
 Create a feature branch:
 
 ```bash
-git checkout -b feature/register
+git checkout -b feature/login
 ```
 
 Check changes:
@@ -514,19 +829,20 @@ git add .
 Commit:
 
 ```bash
-git commit -m "implement register API and tests"
+git commit -m "implement login API and tests"
 ```
 
 Push the branch:
 
 ```bash
-git push -u origin feature/register
+git push -u origin feature/login
 ```
 
 After a pull request is reviewed and merged:
 
 ```bash
 git checkout main
+
 git pull origin main
 ```
 
@@ -570,6 +886,20 @@ Responsibilities are rotated across features so that both members gain practical
 | Test execution and verification | Backend debugging |
 | Backend code review | Test code review |
 
+### Day 3 Responsibilities
+
+| Member A | Member B |
+|---|---|
+| Login API implementation | Login API test design |
+| Credential validation logic | Login automated tests |
+| HTTP status and error handling | Test setup helper implementation |
+| Backend debugging | Test execution and verification |
+| Test code review | Backend code review |
+
+During Day 3, the primary development and testing roles were exchanged.
+
+This allows both team members to gain experience implementing backend functionality and designing automated tests.
+
 ### Collaboration Principles
 
 - Use a shared GitHub repository.
@@ -579,6 +909,7 @@ Responsibilities are rotated across features so that both members gain practical
 - Review code before merging into `main`.
 - Keep the main branch functional.
 - Ensure both members understand major technical decisions.
+- Rotate development and testing responsibilities across project milestones.
 
 ## 11. Development Progress
 
@@ -598,7 +929,7 @@ Responsibilities are rotated across features so that both members gain practical
 - [x] Create and review a pull request
 - [x] Merge changes into `main`
 
-**Expected Milestone Result:** 1 passing automated test.
+**Milestone Result:** 1 passing automated test.
 
 ### Day 2 — User Registration
 
@@ -614,14 +945,36 @@ Responsibilities are rotated across features so that both members gain practical
 - [x] Check successful and error responses
 - [x] Review and integrate changes
 
-**Expected Milestone Result:** 7 passing automated tests.
+**Milestone Result:** 7 passing automated tests.
+
+### Day 3 — User Login
+
+**Milestone: Login API and Automated Tests**
+
+- [x] Define login API requirements
+- [x] Design seven login test cases
+- [x] Implement `POST /login`
+- [x] Add Pydantic login request validation
+- [x] Implement username lookup
+- [x] Implement password comparison
+- [x] Handle incorrect passwords with HTTP 401
+- [x] Handle non-existing users with HTTP 401
+- [x] Reject empty username and password inputs
+- [x] Validate missing required fields
+- [x] Create login test setup helper
+- [x] Add automated login tests
+- [x] Verify successful and failed login responses
+- [x] Run complete regression test suite
+- [x] Verify all 14 automated tests pass
+
+**Milestone Result:** 14 passing automated tests.
 
 ### Future Milestones
 
 | Milestone | Planned Features | Status |
 |---|---|---|
-| Day 3 | User login API and tests | Planned |
-| Phase 2 | Task CRUD API and tests | Planned |
+| Day 4 | Task creation and retrieval APIs | Planned |
+| Phase 2 | Complete Task CRUD API and tests | Planned |
 | Phase 3 | MySQL integration | Planned |
 | Phase 4 | Database validation | Planned |
 | Phase 5 | pytest fixtures and parameterization | Planned |
@@ -636,11 +989,14 @@ The current version is an early educational prototype.
 
 1. User information is stored in a Python list and disappears after the application restarts.
 2. Passwords are temporarily stored in plaintext. Real credentials must not be used.
-3. Authentication and session/token handling are not implemented.
+3. Login performs credential validation only. Authentication tokens and session management are not implemented.
 4. Tests currently use manually selected usernames and do not yet implement comprehensive test-data isolation.
-5. Tests do not yet validate persistent database state.
-6. Automated CI workflows have not yet been integrated.
-7. Performance testing has not yet been implemented.
+5. Login tests require registered users to be prepared before execution.
+6. Tests do not yet validate persistent database state.
+7. Automated CI workflows have not yet been integrated.
+8. Performance testing has not yet been implemented.
+9. Task management APIs have not yet been implemented.
+10. The current authentication implementation is for local educational testing only and is not suitable for production deployment.
 
 These limitations will be addressed during later development milestones.
 
@@ -648,12 +1004,12 @@ These limitations will be addressed during later development milestones.
 
 ### Backend Improvements
 
-- Implement user login.
 - Introduce secure password hashing.
 - Add token-based authentication.
 - Develop task CRUD endpoints.
 - Replace in-memory storage with MySQL.
 - Improve API error handling.
+- Separate API routes and business logic into maintainable modules.
 
 ### Testing Improvements
 
@@ -664,6 +1020,7 @@ These limitations will be addressed during later development milestones.
 - Add database validation.
 - Generate HTML test reports.
 - Introduce structured logging.
+- Expand negative and boundary test coverage.
 
 ### Automation Improvements
 
@@ -689,20 +1046,35 @@ Through this project, the team aims to develop practical understanding of:
 - GitHub collaboration
 - Code review workflows
 - Regression testing
+- User registration and login workflows
+- Basic authentication logic
+- HTTP 401 error handling
+- Test setup and reusable helper functions
+- Multi-endpoint integration testing
 
 ## 15. Project Status
 
-**Current Version:** Day 2 — User Registration
+**Current Version:** Day 3 — User Login
 
-**Implemented APIs:** 2
+**Implemented APIs:** 3
 
-**Automated Test Cases:** 7
+**Automated Test Cases:** 14
+
+**Test Execution Result:** 14 passed
 
 **Backend:** FastAPI with in-memory user storage
 
+**Authentication:** Basic username and password validation (no token/session management)
+
 **Testing:** pytest + FastAPI TestClient
 
-**Next Milestone:** User Login API and Automated Tests
+**Completed Milestones:**
+
+- Day 1 — Project Initialization
+- Day 2 — User Registration
+- Day 3 — User Login
+
+**Next Milestone:** Task Creation and Retrieval APIs (`POST /tasks` and `GET /tasks`)
 
 ---
 
