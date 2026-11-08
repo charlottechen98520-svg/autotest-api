@@ -6,6 +6,9 @@ app = FastAPI()
 
 
 users = []
+tasks = []
+
+next_task_id = 1
 
 
 class UserRegister(BaseModel):
@@ -15,6 +18,10 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     username: str
     password: str
+
+class TaskCreate(BaseModel):
+    title: str
+    description: str = ""
 
 
 @app.get("/health")
@@ -92,3 +99,35 @@ def login_user(user: UserLogin):
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid username or password"
     )
+
+@app.post("/tasks", status_code=status.HTTP_201_CREATED)
+def create_task(task: TaskCreate):
+    global next_task_id
+
+    title = task.title.strip()
+    description = task.description.strip()
+
+    if title == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task title cannot be empty"
+        )
+
+    new_task = {
+        "id": next_task_id,
+        "title": title,
+        "description": description,
+        "completed": False
+    }
+
+    tasks.append(new_task)
+
+    next_task_id += 1
+
+    return new_task
+
+@app.get("/tasks")
+def get_tasks():
+    return tasks
+
+
