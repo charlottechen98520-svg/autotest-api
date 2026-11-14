@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from app.main import app
 
+import pytest
 
 client = TestClient(app)
 
@@ -227,3 +228,48 @@ def test_delete_task_not_found():
     assert response.json() == {
         "detail": "Task not found"
     }
+
+def test_tasks_start_empty(api_client):
+    response = api_client.get("/tasks")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+@pytest.mark.parametrize(
+    "payload,expected_status",
+    [
+        (
+            {"title": "", "description": "Test"},
+            400
+        ),
+        (
+            {"title": "   ", "description": "Test"},
+            400
+        ),
+        (
+            {"description": "Missing title"},
+            422
+        ),
+        (
+            {"title": "Valid title", "description": None},
+            422
+        )
+    ],
+    ids=[
+        "empty-title",
+        "whitespace-title",
+        "missing-title",
+        "invalid-description-type"
+    ]
+)
+def test_create_task_invalid_inputs(
+    api_client,
+    payload,
+    expected_status
+):
+    response = api_client.post(
+        "/tasks",
+        json=payload
+    )
+
+    assert response.status_code == expected_status
