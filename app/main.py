@@ -1,14 +1,14 @@
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
+import pymysql
 
+from fastapi import FastAPI, HTTPException, Response, status
+from pydantic import BaseModel
+from pwdlib import PasswordHash
+
+from app.database import get_connection
 
 app = FastAPI()
 
-
-users = []
-tasks = []
-
-next_task_id = 1
+password_hash = PasswordHash.recommended()
 
 
 class UserRegister(BaseModel):
@@ -28,7 +28,13 @@ class TaskUpdate(BaseModel):
     description: str
     completed: bool
 
-
+def to_task(row):
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "description": row["description"],
+        "completed": bool(row["completed"])
+    }
 
 @app.get("/health")
 def health_check():
@@ -40,157 +46,242 @@ def register_user(user: UserRegister):
     username = user.username.strip()
     password = user.password.strip()
 
-    if username == "":
+    if not username:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Username cannot be empty"
         )
 
-    if password == "":
+    if not password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Password cannot be empty"
         )
 
-    for existing_user in users:
-        if existing_user["username"] == username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already exists"
-            )
+    hashed_password = password_hash.hash(password)
 
-    users.append({
-        "username": username,
-        "password": password
-    })
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO users (username, password_hash)
+                    VALUES (%s, %s)
+                    """,
+                    (username, hashed_password)
+                )
+
+                conn.commit()
+
+            except pymysql.err.IntegrityError:
+                conn.rollback()
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Username already exists"
+                )
 
     return {
         "message": "User registered successfully",
         "username": username
     }
 
-
-
 @app.post("/login")
 def login_user(user: UserLogin):
     username = user.username.strip()
     password = user.password.strip()
 
-    if username == "":
+    if not username:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Username cannot be empty"
         )
 
-    if password == "":
+    if not password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Password cannot be empty"
         )
 
-    for existing_user in users:
-        if existing_user["username"] == username:
-            if existing_user["password"] != password:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid username or password"
-                )
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT username, password_hash
+                FROM users
+                WHERE username = %s
+                """,
+                (username,)
+            )
 
-            return {
-                "message": "Login successful",
-                "username": username
-            }
+            existing_user = cursor.fetchone()
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid username or password"
-    )
+    if existing_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
 
-@app.post("/tasks", status_code=status.HTTP_201_CREATED)
+    if not password_hash.verify(
+        password,
+        existing_user["password_hash"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    return {
+        "message": "Login successful",
+        "username": existing_user["username"]
+    }
+
+
+@app.post("/tasks", status_code=201)
 def create_task(task: TaskCreate):
-    global next_task_id
-
     title = task.title.strip()
     description = task.description.strip()
 
-    if title == "":
+    if not title:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Task title cannot be empty"
         )
 
-    new_task = {
-        "id": next_task_id,
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO tasks
+                    (title, description, completed)
+                VALUES (%s, %s, %s)
+                """,
+                (title, description, False)
+            )
+
+            task_id = cursor.lastrowid
+            conn.commit()
+
+    return {
+        "id": task_id,
         "title": title,
         "description": description,
         "completed": False
     }
 
-    tasks.append(new_task)
-
-    next_task_id += 1
-
-    return new_task
-
 @app.get("/tasks")
 def get_tasks():
-    return tasks
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, description, completed
+                FROM tasks
+                ORDER BY id
+                """
+            )
 
-def find_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
+            rows = cursor.fetchall()
 
-    return None
+    return [to_task(row) for row in rows]
+
+
 
 @app.get("/tasks/{task_id}")
 def get_task_by_id(task_id: int):
-    task = find_task(task_id)
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, description, completed
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    if task is None:
+            row = cursor.fetchone()
+
+    if row is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail="Task not found"
         )
 
-    return task
+    return to_task(row)
 
 @app.put("/tasks/{task_id}")
 def update_task(task_id: int, update: TaskUpdate):
-    task = find_task(task_id)
-
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found"
-        )
-
     title = update.title.strip()
 
-    if title == "":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task title cannot be empty"
-        )
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    task["title"] = title
-    task["description"] = update.description.strip()
-    task["completed"] = update.completed
+            if cursor.fetchone() is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found"
+                )
 
-    return task
+            if not title:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task title cannot be empty"
+                )
 
-@app.delete(
-    "/tasks/{task_id}",
-    status_code=status.HTTP_204_NO_CONTENT
-)
+            description = update.description.strip()
+
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET title = %s,
+                    description = %s,
+                    completed = %s
+                WHERE id = %s
+                """,
+                (
+                    title,
+                    description,
+                    update.completed,
+                    task_id
+                )
+            )
+
+            conn.commit()
+
+    return {
+        "id": task_id,
+        "title": title,
+        "description": description,
+        "completed": update.completed
+    }
+
+@app.delete("/tasks/{task_id}", status_code=204)
 def delete_task(task_id: int):
-    task = find_task(task_id)
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found"
-        )
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found"
+                )
 
-    tasks.remove(task)
-    return None
+            conn.commit()
+
+    return Response(status_code=204)
