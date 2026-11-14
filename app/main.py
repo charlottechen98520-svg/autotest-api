@@ -23,6 +23,12 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
 
+class TaskUpdate(BaseModel):
+    title: str
+    description: str
+    completed: bool
+
+
 
 @app.get("/health")
 def health_check():
@@ -130,4 +136,61 @@ def create_task(task: TaskCreate):
 def get_tasks():
     return tasks
 
+def find_task(task_id: int):
+    for task in tasks:
+        if task["id"] == task_id:
+            return task
 
+    return None
+
+@app.get("/tasks/{task_id}")
+def get_task_by_id(task_id: int):
+    task = find_task(task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    return task
+
+@app.put("/tasks/{task_id}")
+def update_task(task_id: int, update: TaskUpdate):
+    task = find_task(task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    title = update.title.strip()
+
+    if title == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task title cannot be empty"
+        )
+
+    task["title"] = title
+    task["description"] = update.description.strip()
+    task["completed"] = update.completed
+
+    return task
+
+@app.delete(
+    "/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_task(task_id: int):
+    task = find_task(task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    tasks.remove(task)
+    return None
