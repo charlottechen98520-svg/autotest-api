@@ -28,7 +28,13 @@ class TaskUpdate(BaseModel):
     description: str
     completed: bool
 
-
+def to_task(row):
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "description": row["description"],
+        "completed": bool(row["completed"])
+    }
 
 @app.get("/health")
 def health_check():
@@ -130,91 +136,152 @@ def login_user(user: UserLogin):
         "username": existing_user["username"]
     }
 
-@app.post("/tasks", status_code=status.HTTP_201_CREATED)
-def create_task(task: TaskCreate):
-    global next_task_id
 
+@app.post("/tasks", status_code=201)
+def create_task(task: TaskCreate):
     title = task.title.strip()
     description = task.description.strip()
 
-    if title == "":
+    if not title:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Task title cannot be empty"
         )
 
-    new_task = {
-        "id": next_task_id,
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO tasks
+                    (title, description, completed)
+                VALUES (%s, %s, %s)
+                """,
+                (title, description, False)
+            )
+
+            task_id = cursor.lastrowid
+            conn.commit()
+
+    return {
+        "id": task_id,
         "title": title,
         "description": description,
         "completed": False
     }
 
-    tasks.append(new_task)
-
-    next_task_id += 1
-
-    return new_task
-
 @app.get("/tasks")
 def get_tasks():
-    return tasks
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, description, completed
+                FROM tasks
+                ORDER BY id
+                """
+            )
 
-def find_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
+            rows = cursor.fetchall()
 
-    return None
+    return [to_task(row) for row in rows]
+
+
 
 @app.get("/tasks/{task_id}")
 def get_task_by_id(task_id: int):
-    task = find_task(task_id)
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, description, completed
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    if task is None:
+            row = cursor.fetchone()
+
+    if row is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail="Task not found"
         )
 
-    return task
+    return to_task(row)
 
 @app.put("/tasks/{task_id}")
 def update_task(task_id: int, update: TaskUpdate):
-    task = find_task(task_id)
-
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found"
-        )
-
     title = update.title.strip()
 
-    if title == "":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task title cannot be empty"
-        )
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    task["title"] = title
-    task["description"] = update.description.strip()
-    task["completed"] = update.completed
+            if cursor.fetchone() is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found"
+                )
 
-    return task
+            if not title:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task title cannot be empty"
+                )
 
-@app.delete(
-    "/tasks/{task_id}",
-    status_code=status.HTTP_204_NO_CONTENT
-)
+            description = update.description.strip()
+
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET title = %s,
+                    description = %s,
+                    completed = %s
+                WHERE id = %s
+                """,
+                (
+                    title,
+                    description,
+                    update.completed,
+                    task_id
+                )
+            )
+
+            conn.commit()
+
+    return {
+        "id": task_id,
+        "title": title,
+        "description": description,
+        "completed": update.completed
+    }
+
+@app.delete("/tasks/{task_id}", status_code=204)
 def delete_task(task_id: int):
-    task = find_task(task_id)
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,)
+            )
 
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found"
-        )
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found"
+                )
 
-    tasks.remove(task)
-    return None
+            conn.commit()
+
+    return Response(status_code=204)
