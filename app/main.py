@@ -1,14 +1,14 @@
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
+import pymysql
 
+from fastapi import FastAPI, HTTPException, Response, status
+from pydantic import BaseModel
+from pwdlib import PasswordHash
+
+from app.database import get_connection
 
 app = FastAPI()
 
-
-users = []
-tasks = []
-
-next_task_id = 1
+password_hash = PasswordHash.recommended()
 
 
 class UserRegister(BaseModel):
@@ -40,71 +40,95 @@ def register_user(user: UserRegister):
     username = user.username.strip()
     password = user.password.strip()
 
-    if username == "":
+    if not username:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Username cannot be empty"
         )
 
-    if password == "":
+    if not password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Password cannot be empty"
         )
 
-    for existing_user in users:
-        if existing_user["username"] == username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already exists"
-            )
+    hashed_password = password_hash.hash(password)
 
-    users.append({
-        "username": username,
-        "password": password
-    })
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO users (username, password_hash)
+                    VALUES (%s, %s)
+                    """,
+                    (username, hashed_password)
+                )
+
+                conn.commit()
+
+            except pymysql.err.IntegrityError:
+                conn.rollback()
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Username already exists"
+                )
 
     return {
         "message": "User registered successfully",
         "username": username
     }
 
-
-
 @app.post("/login")
 def login_user(user: UserLogin):
     username = user.username.strip()
     password = user.password.strip()
 
-    if username == "":
+    if not username:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Username cannot be empty"
         )
 
-    if password == "":
+    if not password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Password cannot be empty"
         )
 
-    for existing_user in users:
-        if existing_user["username"] == username:
-            if existing_user["password"] != password:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid username or password"
-                )
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT username, password_hash
+                FROM users
+                WHERE username = %s
+                """,
+                (username,)
+            )
 
-            return {
-                "message": "Login successful",
-                "username": username
-            }
+            existing_user = cursor.fetchone()
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid username or password"
-    )
+    if existing_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    if not password_hash.verify(
+        password,
+        existing_user["password_hash"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    return {
+        "message": "Login successful",
+        "username": existing_user["username"]
+    }
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
 def create_task(task: TaskCreate):
