@@ -227,3 +227,9 @@ def test_delete_task_not_found():
     assert response.json() == {
         "detail": "Task not found"
     }
+
+def test_tasks_start_empty(api_client):
+    response = api_client.get("/tasks")
+
+    assert response.status_code == 200
+    assert response.json() == []
