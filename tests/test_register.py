@@ -2,6 +2,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+import pytest
+
 
 client = TestClient(app)
 
@@ -107,3 +109,35 @@ def test_register_missing_password():
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "username,password,expected_status",
+    [
+        ("", "123456", 400),
+        ("   ", "123456", 400),
+        ("test_user", "", 400),
+        ("test_user", "   ", 400)
+    ],
+    ids=[
+        "empty-username",
+        "whitespace-username",
+        "empty-password",
+        "whitespace-password"
+    ]
+)
+def test_register_invalid_inputs(
+    api_client,
+    username,
+    password,
+    expected_status
+):
+    response = api_client.post(
+        "/register",
+        json={
+            "username": username,
+            "password": password
+        }
+    )
+
+    assert response.status_code == expected_status
